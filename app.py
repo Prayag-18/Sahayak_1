@@ -2,13 +2,13 @@ from flask import Flask, render_template,redirect,url_for,request,jsonify,sessio
 from chatbot import chat
 from news import *
 from db import *
+import wave
+import sounddevice as sd
 from pdf_reader import *
 import speech_recognition as sr
-from pydub import AudioSegment
 from datetime import datetime, timedelta
 
-from pydub.utils import mediainfo
-import uuid
+
 
 app = Flask(__name__)
 
@@ -24,58 +24,37 @@ def home():
 
 @app.route('/process_audio', methods=['POST'])
 def process_audio():
-    print("Received audio file")
-
-    if 'audio' not in request.files:
-        print("No audio file found")
-        return jsonify({"error": "No audio file received"}), 400
-
-    # Extract the audio file from the request
-    audio_file = request.files['audio']
-    print(f"Received audio file: {audio_file.filename}, type: {audio_file.content_type}")
-
-    # Save the raw file data to disk for debugging (optional, if you want to inspect)
+    print("Recording audio...")
+    
+    duration = 5  # seconds
+    sample_rate = 44100  # Hz
+    
     try:
-        file_path = "received_audio_raw.wav"
-        audio_file.save(file_path)
-        print(f"Audio saved as '{file_path}' for debugging.")
-    except Exception as e:
-        print(f"Error saving audio file: {e}")
-        return jsonify({"error": "Failed to save audio file"}), 500
-
-        # Read the file into memory
-    audio_file.seek(0)
-    audio_blob = audio_file.read()
-
-    # Debugging: Check the size of the audio blob
-    print(f"Audio blob size: {len(audio_blob)} bytes")
-
-    # Convert OGG (Opus) to WAV in memory using pydub
-    try:
-        audio = AudioSegment.from_file(io.BytesIO(audio_blob), format="ogg")  # Explicitly specify 'ogg' format
-        wav_audio = io.BytesIO()
-        audio.export(wav_audio, format="wav")  # Export as WAV to a BytesIO buffer
-        wav_audio.seek(0)  # Reset pointer to the beginning of the buffer
-    except Exception as e:
-        print(f"Error during audio conversion: {str(e)}")
-        return jsonify({"error": "Audio conversion failed"}), 500
-
-    # Initialize the recognizer
-    recognizer = sr.Recognizer()
-
-    # Use the in-memory WAV audio with SpeechRecognition
-    with sr.AudioFile(wav_audio) as source:
-        audio_data = recognizer.record(source)  # Process in-memory audio
-
-    try:
-        # Convert speech to text
-        text = recognizer.recognize_google(audio_data)
-        return jsonify({"text": text})
-    except sr.UnknownValueError:
-        return jsonify({"text": "Could not understand audio"})
-    except sr.RequestError:
-        return jsonify({"text": "Error with speech recognition service"})
-
+        audio_data = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype='int16')
+        sd.wait()
+        print("Audio recorded successfully")
+    
+        # Convert to WAV format in memory
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit PCM
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio_data.tobytes())
+        
+        wav_buffer.seek(0)
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(wav_buffer) as source:
+            audio = recognizer.record(source)
+        
+        try:
+            text = recognizer.recognize_google(audio, language='hi-IN')
+            return jsonify({"text": text})
+        except sr.UnknownValueError:
+            return jsonify({"text": "Could not understand audio"})
+        except sr.RequestError:
+            return jsonify({"text": "Error with speech recognition service"})
+    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
